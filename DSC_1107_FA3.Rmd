@@ -1,0 +1,501 @@
+---
+title: "DSC_1107_FA3"
+author: "Frances Aneth Rosales"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: FA3.css
+    code_folding: hide
+    keep_md: true
+---
+<style>
+  body {
+    text-align: justify;
+  }
+</style>
+
+
+<br>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br><br><br><br>
+
+# Apply the Packages
+
+```{r}
+library(tidyverse)	# tidyverse 
+library(readxl)	# for reading Excel files 
+library(knitr)	# for include_graphics() 
+library(kableExtra) # for printing tables 
+library(cowplot)	# for side by side plots
+library(FNN)	# for K-nearest-neighbors regression
+library(stat471)	# for cross_validate_spline()
+library(readxl)
+```
+
+<br><br><br>
+
+
+
+```{r files import}
+
+library(readxl)
+library(tibble)
+
+file_path <- "C:/Users/asus/Documents/ALL FEU FILES/FEU FOLDER 6/DSC_1107 Data Mining/FA3/bmd-data.xlsx"
+
+bmd_raw <- as_tibble(read_excel(file_path, sheet = "bmd"))
+
+print(bmd_raw)
+
+
+```
+To get this data into a tidy format, we need to ensure that the variables "fracture" and "medication" are separated into individual columns, with each value in a separate row. This can be achieved by either expanding the factors into separate columns or by creating a new column for each unique value in these variables. Additionally, if "sex" is a factor with two levels (e.g., "F" and "M"), it should be converted into a numeric column (e.g., 0 for "F" and 1 for "M") or a character column with the actual values.
+
+
+
+
+
+
+
+<br><br>
+```{r the_mlb_aggregate}
+library(tidyr)
+library(dplyr)
+bmd <- bmd_raw %>%
+  mutate(sex = if_else(sex == "F", 1, 0)) %>%
+  mutate(fracture = if_else(sex == "no fracture", 0, 1)) %>%
+  mutate(age = as.integer(age))
+  
+print(bmd)
+
+
+```
+
+
+<br><br>
+
+
+```{r the_mlb_yearly}
+
+num_younger_than_18 <- sum(bmd$age < 18)
+paste("Number of Children:",num_younger_than_18)
+
+Number_of_girls_if_f_1 <- sum(bmd$sex == 1)
+paste("Number of Girls:",Number_of_girls_if_f_1)
+
+Number_of_boys_if_m_0 <- sum(bmd$sex == 0)
+paste("Number of Boys:",Number_of_boys_if_m_0)
+
+
+median_age_boys <- median(bmd$age[bmd$sex == 0])
+print(paste("Median age of boys:", median_age_boys))
+
+
+median_age_girls <- median(bmd$age[bmd$sex == 1])
+print(paste("Median age of girls:", median_age_girls))
+
+```
+
+<br><br>
+
+
+
+```{r the_mlb_aggregate_computed}
+library(ggplot2)
+library(gridExtra)
+
+plot_data <- data.frame(
+  group = c(rep("M", sum(bmd$sex == 0)), rep("F", sum(bmd$sex == 1))),
+  variable = rep("spnbmd", nrow(bmd)),
+  value = bmd$spnbmd
+) 
+
+spnbmd_plot <- ggplot(plot_data, aes(x = group, y = value, fill = group)) +
+  geom_boxplot() +
+  facet_grid(.~variable) +
+  labs(title = "Comparison of spnbmd between Boys and Girls",
+       x = "Group",
+       y = "spnbmd")
+
+age_plot <- ggplot(plot_data, aes(x = group, y = value, fill = group)) +
+  geom_density(alpha = 0.7) +
+  facet_grid(.~variable) +
+  labs(title = "Comparison of Age Distribution between Boys and Girls",
+       x = "Group",
+       y = "Density")
+
+grid.arrange(spnbmd_plot, age_plot, ncol = 2)
+
+
+```
+
+<br><br>
+
+```{r scatter plots}
+library(ggplot2)
+
+ggplot(bmd_raw, aes(x = age, y = spnbmd, color = sex)) +
+  geom_point() +
+  facet_grid(.~sex) +
+  labs(title = "Scatter Plot of spnbmd vs. Age by Gender",
+       x = "Age",
+       y = "spnbmd")
+
+```
+  
+
+
+<br><br><br>
+
+
+
+```{r payroll_plot}
+
+set.seed(5) 
+n <- nrow(bmd)
+train_samples <- sample(1:n, round(0.8*n))
+bmd_train <- bmd[train_samples, ]
+bmd_test <- bmd[-train_samples, ]
+
+print(bmd_train)
+print(bmd_test)
+
+```
+
+
+
+<br><br>
+
+1.	Since the trends in spnbmd look somewhat different for boys than for girls, we might want to fit separate splines to these two groups. Separate bmd_train into bmd_train_male and bmd_train_female, and likewise for bmd_test.
+```{r dplyr_greteast_payroll_aggregate_computed}
+library(dplyr)
+
+bmd_train_male <- bmd_train %>% filter(sex == "0")
+bmd_train_female <- bmd_train %>% filter(sex == "1")
+
+print(bmd_train_male)
+print(bmd_train_female)
+
+bmd_test_male <- bmd_test %>% filter(sex == "0")
+bmd_test_female <- bmd_test %>% filter(sex == "1")
+
+print(bmd_test_male)
+print(bmd_test_female)
+```
+
+<br><br>
+
+
+2.	Using cross_validate_spline from the stat471 R package, perform 10-fold cross-validation on bmd_train_male and bmd_train_female, trying degrees of freedom 1,2,. . . ,15. Display the two resulting CV plots side by side.
+
+
+```{r pct_increase_year}
+
+library(mgcv)
+
+response_column <- "spnbmd" 
+predictor_column <- "age"    
+
+data_male <- bmd_train_male %>% select(response_column, predictor_column)
+
+formula_str <- paste(response_column, "~ s(", predictor_column, ", df = df)", sep = "")
+
+
+gam_model_male <- gam(spnbmd ~ s(age), data = data_male)
+
+gam_check_result <- gam.check(gam_model_male)
+
+summary(gam_model_male)
+
+```
+
+<br><br><br>
+
+```{r pct_wins_acc_year}
+
+
+library(mgcv)
+
+response_column <- "spnbmd"
+predictor_column <- "age"
+
+formula_str <- paste(response_column, "~ s(", predictor_column, ")", sep = "")
+
+cv_results_male <- sapply(1:15, function(df) {
+  gam_model <- gam(as.formula(formula_str), data = bmd_train_male, df = df)
+  gam.check(gam_model)$gcv.amin
+})
+
+cv_results_female <- sapply(1:15, function(df) {
+  gam_model <- gam(as.formula(formula_str), data = bmd_train_female, df = df)
+  gam.check(gam_model)$gcv.amin
+})
+
+
+library(mgcv)
+par(mfrow = c(1, 2))
+
+plot(1:15, unlist(cv_results_male), type = 'b', main = 'Male CV Plot', xlab = 'Degrees of Freedom', ylab = 'GCV Score')
+
+
+plot(1:15, unlist(cv_results_female), type = 'b', main = 'Female CV Plot', xlab = 'Degrees of Freedom', ylab = 'GCV Score')
+
+
+
+
+```
+
+
+<br><br>
+
+
+<h2>
+<li>  Using dplyr, identify the three teams with the greatest pct_wins_aggregate_computed and print a table of these teams along with pct_wins_aggregate_computed. </li>
+ </h2>
+
+
+```{r winper_4}
+min_gcv_male <- sapply(cv_results_male, min)
+
+min_gcv_female <- sapply(cv_results_female, min)
+
+min_df_male <- which.min(min_gcv_male)
+min_df_female <- which.min(min_gcv_female)
+
+cat("Degrees of Freedom minimizing CV curve for males:", min_df_male, "\n")
+cat("Degrees of Freedom minimizing CV curve for females:", min_df_female, "\n")
+
+```
+As desired, setting the degrees of freedom to 1 simplifies the smooth term to a straight line. 
+
+<br><br>
+
+
+```{r winper_5}
+
+genders <- lm(spnbmd ~ sex, data = bmd_raw)
+
+gendersum <- summary(genders)
+gendersum
+```
+To summarize:
+
+Residual Standard Error: 0.1613
+Degrees of Freedom for Residuals: 167
+Std. Error for 'sexM' Coefficient: 0.02482
+<br><br>
+
+Re-PLOT of TOP TEAMS
+
+```{r winper_6}
+
+min_gcv_male <- sapply(cv_results_male, min)
+
+min_gcv_female <- sapply(cv_results_female, min)
+
+min_df_male <- which.min(min_gcv_male)
+min_df_female <- which.min(min_gcv_female)
+
+df.min <- max(min_df_male, min_df_female)
+se_df_male <- which(unlist(cv_results_male) <= unlist(cv_results_male)[df.min] + min(unlist(cv_results_male)) * 1.0)
+
+se_df_female <- which(unlist(cv_results_female) <= unlist(cv_results_female)[df.min] + min(unlist(cv_results_female)) * 1.0)
+
+df.1se_male <- max(se_df_male)
+df.1se_female <- max(se_df_female)
+
+df.1se <- max(df.1se_male, df.1se_female)
+
+df.min <- max(min_df_male, min_df_female)
+
+df.1se <- max(df.1se_male, df.1se_female)
+
+scatter_plot <- ggplot(bmd_train, aes(x = age, y = spnbmd)) +
+  geom_point() +
+  facet_grid(sex ~ .) +  # 
+  theme_minimal()
+
+scatter_plot <- scatter_plot +
+  geom_smooth(data = bmd_train_male, method = "gam", formula = y ~ s(x, df = df.min), color = "blue") +
+  geom_smooth(data = bmd_train_female, method = "gam", formula = y ~ s(x, df = df.min), color = "red") +
+  geom_smooth(data = bmd_train_male, method = "gam", formula = y ~ s(x, df = df.1se), linetype = "dashed", color = "blue") +
+  geom_smooth(data = bmd_train_female, method = "gam", formula = y ~ s(x, df = df.1se), linetype = "dashed", color = "red") +
+  labs(title = "Scatter Plot of spnbmd vs. age faceted by gender")
+
+print(scatter_plot)
+
+
+```
+<br><br>
+```{r winper_6_7}
+
+library(mgcv)
+
+final_model_male <- gam(spnbmd ~ s(age, bs = "cr", k = df.min), data = bmd_train_male)
+print("Male")
+final_model_male
+
+final_model_female <- gam(spnbmd ~ s(age, bs = "cr", k = df.min), data = bmd_train_female)
+print("Female")
+final_model_female
+
+```
+<h2>
+<li> Using dplyr, identify the three teams with the greatest efficiency, and print a table of these teams
+along with their efficiency, as well as their pct_wins_aggregate_computed and payroll_aggregate_computed.
+</li>
+ </h2>
+
+
+```{r winper_7}
+pred_train_male <- predict(final_model_male, newdata = bmd_train_male, type = "response")
+pred_train_female <- predict(final_model_female, newdata = bmd_train_female, type = "response")
+
+pred_test_male <- predict(final_model_male, newdata = bmd_test_male, type = "response")
+pred_test_female <- predict(final_model_female, newdata = bmd_test_female, type = "response")
+
+rmse_train_male <- sqrt(mean((bmd_train_male$spnbmd - pred_train_male)^2))
+rmse_test_male <- sqrt(mean((bmd_test_male$spnbmd - pred_test_male)^2))
+
+rmse_train_female <- sqrt(mean((bmd_train_female$spnbmd - pred_train_female)^2))
+rmse_test_female <- sqrt(mean((bmd_test_female$spnbmd - pred_test_female)^2))
+
+table_rmse <- data.frame(
+  Gender = c("Male", "Female"),
+  Training_RMSE = c(rmse_train_male, rmse_train_female),
+  Test_RMSE = c(rmse_test_male, rmse_test_female)
+)
+
+print(table_rmse)
+
+
+```
+
+Training RMSE:
+
+Male: The training RMSE for boys is 0.1616. This value represents the average difference between the actual and predicted values for the spnbmd variable in the training dataset. A lower RMSE indicates better model fit to the training data.
+Female: The training RMSE for girls is 0.1161. Similarly, this value represents the average difference between the actual and predicted values for the spnbmd variable in the training dataset for females.
+Test RMSE:
+
+Male: The test RMSE for boys is 0.2177. This value represents the average difference between the actual and predicted values for the spnbmd variable in the test dataset. A higher RMSE in the test set compared to the training set suggests that the model may not generalize well to new, unseen data.
+Female: The test RMSE for girls is 0.1248. Similarly, this value represents the average difference between the actual and predicted values for the spnbmd variable in the test dataset for females.
+Comparison:
+
+The training RMSE is generally lower than the test RMSE for both genders, which is expected. Models are trained to minimize errors on the training set, so they tend to perform better on that data.
+The extent of overfitting can be assessed by comparing the training and test RMSE. If the test RMSE is significantly higher than the training RMSE, it suggests that the model may be overfitting the training data. Overfitting occurs when a model learns the training data too well, capturing noise or outliers and making it less generalizable to new data.
+
+
+
+```{r neww1}
+
+library(ggplot2)
+bmd_train_male$predicted_spnbmd <- predict(final_model_male, newdata = bmd_train_male)
+bmd_train_female$predicted_spnbmd <- predict(final_model_female, newdata = bmd_train_female)
+
+combined_data <- rbind(
+  data.frame(data = bmd_train_male, gender = "Male"),
+  data.frame(data = bmd_train_female, gender = "Female")
+)
+
+if (!"data.spnbmd" %in% names(combined_data)) {
+  stop("Variable 'data.spnbmd' not found in the 'combined_data' dataset.")
+}
+library(ggplot2)
+ggplot(combined_data, aes(x = data.age, y = data.spnbmd, color = gender)) +
+  geom_point() +
+  geom_line(aes(y = data.predicted_spnbmd), size = 1) +
+  labs(title = "Scatter Plot with Overlaid Spline Fits for Boys and Girls",
+       x = "Age",
+       y = "spnbmd") +
+  scale_color_manual(values = c("Male" = "blue", "Female" = "pink")) +
+  theme_minimal()
+```
+
+
+
+
+```{r neww2}
+
+library(mgcv)
+
+final_model_male <- gam(spnbmd ~ s(age, bs = "cr", k = df.min), data = bmd_train_male)
+final_model_male
+final_model_female <- gam(spnbmd ~ s(age, bs = "cr", k = df.min), data = bmd_train_female)
+final_model_female
+
+```
+
+Peaks of Growth Spurts:
+
+Boys: Look for the age where the fitted curve for boys reaches its highest point. This age corresponds to the approximate peak of the growth spurt for boys.
+Girls: Similarly, identify the age where the fitted curve for girls reaches its highest point. This age corresponds to the approximate peak of the growth spurt for girls.
+Ages where Growth Levels Off:
+
+Boys and Girls: Look for the ages where the fitted curves start to flatten out or have a less steep slope. These ages indicate when growth tends to level off for both boys and girls.
+
+#--------------------------------------------------------------------
+
+# 2.1	A simple rule to predict this season’s yield (15 points)
+
+Training Error:
+
+The training error of the prediction rule, where the yield of each tree for this year is predicted based on last year's yield from the same tree, can be calculated as the mean squared error (MSE) between the predicted yields and the actual yields observed in the training data.
+Mean Squared Bias (MSB):
+
+The mean squared bias measures the average squared difference between the predicted values and the true underlying values across all possible datasets. In this case, since the prediction rule is based solely on the previous year's yield for each tree, the bias will depend on how well the previous year's yield reflects the true underlying yield. If the underlying trend changes slowly over time, the bias may be small. However, if there are significant changes in yield patterns from year to year, the bias may be larger.
+Mean Variance (MV):
+
+The mean variance measures the average variability in predictions across different datasets. In this case, since the prediction is solely based on the previous year's yield for each tree, the variance will depend on how much the yields fluctuate from year to year. If the yields for each tree vary greatly from year to year, the variance will be higher.
+Expected Test Error (ETE):
+
+The expected test error is the expected value of the mean squared error (MSE) of the prediction rule when applied to new test data. It is a combination of the mean squared bias and the mean variance. If the bias and variance are both small, the expected test error will be low. However, if either the bias or variance is large, the expected test error will be higher.
+
+
+
+# NOW ANALYZING 
+
+Figure 1: Apple tree yield for each 10m by 10m block of the orchard in a given year:
+
+This figure likely displays the actual apple tree yields for each 10m by 10m block in the orchard for a specific year. Each block's yield is represented by a data point or a color gradient, illustrating the spatial variation in yields across the orchard.
+Figure 2: Underlying trend in apple yield for each 10m by 10m block of the orchard:
+
+This figure represents the underlying trend or pattern in apple yields for each 10m by 10m block of the orchard. The trend could be depicted as a surface, contour lines, or another visualization method. The description suggests that the top right-hand corner of the orchard is more fruitful, indicating a spatial pattern in apple yields that the prediction model should capture.
+Considering these figures, the prediction model based on the previous year's yield for each tree aims to capture the spatial patterns seen in Figure 2. However, it may not account for variations due to factors other than the previous year's yield.
+
+
+Training Error:
+
+The training error would be the mean squared error between the predicted yields (using the previous year's yields) and the actual yields observed in Figure 1.
+Mean Squared Bias (MSB), Mean Variance (MV), and Expected Test Error (ETE):
+
+MSB and MV depend on the underlying trend in Figure 2 and how well the previous year's yield captures this trend. If the previous year's yield closely reflects the true underlying trend, MSB and MV may be small. ETE combines both MSB and MV to estimate how well the model will perform on new test data.
+
+
+
+
+
+# 3. 
+the simplicity of the prediction rule and its reliance on a single predictor may overlook critical factors affecting apple tree yield. More sophisticated models that consider multiple predictors and spatial variations are likely to provide more accurate and robust predictions.
+
+
+
+# 2.2	K-nearest neighbors regression (conceptual) (15 points)
+
+Effect of K on Model Complexity:
+
+As K increases in K-nearest neighbors (KNN) regression, the model complexity decreases. This is because a larger value of K implies a smoother decision boundary or regression surface. Each prediction is influenced by more neighbors, leading to a more averaged or generalized prediction. In extreme cases, when K is equal to the size of the training set, the model becomes a constant predictor.
+Degrees of Freedom for KNN:
+
+The degrees of freedom for KNN is sometimes considered n/K, where n is the training set size. This is because, in KNN, the effective degrees of freedom are related to the number of neighbors considered (K). In a situation where the data are clumped in groups of K, each group effectively contributes one degree of freedom. As K increases, the neighborhoods become larger, reducing the number of distinct groups and degrees of freedom.
+Increasing K to Improve Prediction:
+
+Conceptually, increasing K tends to improve the prediction rule by reducing model variance and increasing bias. With smaller values of K, the model becomes more sensitive to local fluctuations and noise in the data, leading to higher variance. Larger values of K, on the other hand, result in smoother predictions that are less influenced by individual data points. This reduction in variance helps in capturing the underlying trend and improving generalization to new data, contributing to a lower variance in the bias-variance tradeoff.
+Increasing K to Worsen Prediction:
+
+Conversely, increasing K tends to worsen the prediction rule by increasing bias and reducing model variance. A very large value of K results in overly smoothed predictions that may fail to capture local patterns and nuances in the data. This increased bias can lead to systematic errors in predictions, especially if the true relationship is complex and nonlinear. In such cases, the model might miss important details in the data, resulting in a higher bias in the bias-variance tradeoff.
+
+
+
+
